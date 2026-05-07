@@ -1,0 +1,659 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LLMCheesBench Replay</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #172026;
+      --muted: #5f6b73;
+      --line: #d7dce0;
+      --paper: #f7f8f8;
+      --panel: #ffffff;
+      --light: #e9dec7;
+      --dark: #6f8f72;
+      --accent: #2f6fed;
+      --engine: #bd7b19;
+      --model: #237b64;
+      --both: #2f6fed;
+      --bad: #b94135;
+      --wait: #7d8790;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: var(--paper);
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: end;
+      gap: 24px;
+      padding: 22px 28px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
+    }
+    h1 {
+      margin: 0 0 4px;
+      font-size: 24px;
+      line-height: 1.1;
+      letter-spacing: 0;
+    }
+    .subtle { color: var(--muted); font-size: 14px; }
+    .status-line {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 22px;
+    }
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--wait);
+    }
+    .dot.running {
+      background: var(--accent);
+      animation: pulse 1.1s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); opacity: 0.65; }
+      50% { transform: scale(1.45); opacity: 1; }
+    }
+    main {
+      display: grid;
+      grid-template-columns: minmax(300px, 560px) minmax(280px, 1fr);
+      gap: 24px;
+      padding: 24px 28px 32px;
+      max-width: 1220px;
+      margin: 0 auto;
+    }
+    .board-wrap {
+      width: min(100%, 560px);
+    }
+    .board {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 1;
+      display: grid;
+      grid-template-columns: repeat(8, 1fr);
+      border: 1px solid #24302b;
+      background: #24302b;
+    }
+    .square {
+      position: relative;
+      display: grid;
+      place-items: center;
+      min-width: 0;
+      min-height: 0;
+      font-size: clamp(24px, 7vw, 54px);
+      line-height: 1;
+      user-select: none;
+    }
+    .light { background: var(--light); }
+    .dark { background: var(--dark); }
+    .coord {
+      position: absolute;
+      left: 5px;
+      bottom: 4px;
+      font-size: 11px;
+      line-height: 1;
+      color: rgba(23, 32, 38, 0.68);
+    }
+    .from.model, .to.model { box-shadow: inset 0 0 0 4px var(--model); }
+    .from.engine, .to.engine { box-shadow: inset 0 0 0 4px var(--engine); }
+    .from.both, .to.both { box-shadow: inset 0 0 0 4px var(--both); }
+    .square.split-model-engine::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(135deg, rgba(35,123,100,.34) 0 50%, rgba(189,123,25,.38) 50% 100%);
+      pointer-events: none;
+    }
+    .tag {
+      position: absolute;
+      top: 4px;
+      right: 4px;
+      border-radius: 4px;
+      padding: 2px 4px;
+      color: white;
+      font-size: 10px;
+      font-weight: 700;
+      line-height: 1;
+    }
+    .tag.model { background: var(--model); }
+    .tag.engine { background: var(--engine); }
+    .tag.both { background: var(--both); }
+    .arrow-layer {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      overflow: visible;
+    }
+    .piece {
+      transition: transform 180ms ease, opacity 180ms ease;
+      text-shadow: 0 1px 0 rgba(255,255,255,.35);
+    }
+    .controls, .details, .list {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+    .controls { padding: 14px; margin-top: 14px; }
+    .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    button, select {
+      height: 36px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--ink);
+      padding: 0 12px;
+      font: inherit;
+      font-size: 14px;
+    }
+    button { cursor: pointer; }
+    button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+    button.model { background: var(--model); color: #fff; border-color: var(--model); }
+    button.engine { background: var(--engine); color: #fff; border-color: var(--engine); }
+    button.both { background: var(--both); color: #fff; border-color: var(--both); }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    select { flex: 1 1 260px; min-width: 0; }
+    .side { display: grid; gap: 16px; align-content: start; }
+    .details { padding: 18px; }
+    .details h2 { margin: 0 0 6px; font-size: 20px; letter-spacing: 0; }
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      margin: 16px 0;
+    }
+    .metric {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 10px;
+      background: #fbfbfb;
+    }
+    .metric b { display: block; font-size: 18px; }
+    .metric span { color: var(--muted); font-size: 12px; }
+    .moves {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin: 14px 0;
+    }
+    .move-box {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 10px;
+      min-height: 82px;
+    }
+    .move-box.model { border-top: 4px solid var(--model); }
+    .move-box.engine { border-top: 4px solid var(--engine); }
+    .move-note {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+    .label { color: var(--muted); font-size: 12px; text-transform: uppercase; }
+    .move-text { margin-top: 4px; font-size: 18px; font-weight: 700; }
+    pre {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      max-height: 160px;
+      overflow: auto;
+      padding: 10px;
+      background: #f0f2f3;
+      border-radius: 6px;
+      font-size: 12px;
+      line-height: 1.35;
+    }
+    .list { overflow: hidden; }
+    .list button {
+      width: 100%;
+      height: auto;
+      min-height: 42px;
+      border: 0;
+      border-bottom: 1px solid var(--line);
+      border-radius: 0;
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      text-align: left;
+    }
+    .list button.active { background: #e9f0ff; }
+    .pill {
+      flex: 0 0 auto;
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 12px;
+      color: #fff;
+      background: var(--bad);
+    }
+    .pill.ok { background: var(--model); }
+    .pill.waiting { background: var(--wait); }
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .legend span { display: inline-flex; align-items: center; gap: 6px; }
+    .swatch {
+      width: 12px;
+      height: 12px;
+      border-radius: 3px;
+      display: inline-block;
+    }
+    .swatch.model { background: var(--model); }
+    .swatch.engine { background: var(--engine); }
+    .swatch.both { background: var(--both); }
+    .waiting-panel {
+      border: 1px dashed var(--line);
+      border-radius: 6px;
+      padding: 12px;
+      color: var(--muted);
+      background: #fbfbfb;
+      line-height: 1.4;
+    }
+    @media (max-width: 860px) {
+      header { align-items: start; flex-direction: column; }
+      main { grid-template-columns: 1fr; padding: 16px; }
+      .metrics, .moves { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>LLMCheesBench Replay</h1>
+      <div class="subtle status-line"><span class="dot" id="statusDot"></span><span id="runMeta"></span></div>
+    </div>
+    <div class="subtle" id="engineMeta"></div>
+  </header>
+  <main>
+    <section>
+      <div class="board-wrap">
+        <div class="board" id="board"></div>
+      </div>
+      <div class="controls">
+        <div class="row">
+          <button id="prevBtn" title="Previous position">Prev</button>
+          <select id="positionSelect" aria-label="Position"></select>
+          <button id="nextBtn" title="Next position">Next</button>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <button class="model" id="modelBtn">Show Model Move</button>
+          <button class="engine" id="engineBtn">Show Stockfish Move</button>
+          <button class="both" id="bothBtn">Compare Both</button>
+          <button class="primary" id="resetBtn">Reset Board</button>
+        </div>
+        <div class="legend">
+          <span><i class="swatch model"></i>LLM</span>
+          <span><i class="swatch engine"></i>Master AI</span>
+          <span><i class="swatch both"></i>Same move</span>
+        </div>
+      </div>
+    </section>
+    <section class="side">
+      <div class="details">
+        <h2 id="positionTitle"></h2>
+        <div class="subtle" id="positionSubtitle"></div>
+        <div class="metrics">
+          <div class="metric"><b id="scoreMetric"></b><span>Score</span></div>
+          <div class="metric"><b id="lossMetric"></b><span>Centipawn Loss</span></div>
+          <div class="metric"><b id="matchMetric"></b><span>Engine Match</span></div>
+        </div>
+        <div class="moves">
+          <div class="move-box model">
+            <div class="label">Model</div>
+            <div class="move-text" id="modelMove"></div>
+            <div class="move-note" id="modelNote"></div>
+          </div>
+          <div class="move-box engine">
+            <div class="label">Master AI</div>
+            <div class="move-text" id="engineMove"></div>
+            <div class="move-note" id="engineNote"></div>
+          </div>
+        </div>
+        <div class="waiting-panel" id="waitingPanel" hidden>Waiting for this benchmark position to finish. The page refreshes automatically as more LLM moves arrive.</div>
+        <div class="label">Model Response</div>
+        <pre id="responseText"></pre>
+      </div>
+      <div class="list" id="positionList"></div>
+    </section>
+  </main>
+  <script>
+    let data = {"benchmark": "ChessBench", "status": "complete", "model_name": "Nemotron 3 Super (Ollama)", "generated_at": "2026-05-07T02:04:07.481244+00:00", "engine": {"path": "engines/stockfish/stockfish-macos-m1-apple-silicon", "movetime_ms": 2000, "depth": null, "threads": 8, "hash_mb": 1024, "multipv": 4}, "summary": {"positions": 10, "legal_moves": 6, "forfeits": 4, "exact_engine_matches": 3, "weighted_score": 5.3647, "total_weight": 11.15, "normalized_score": 48.11, "by_category": {"opening": {"positions": 2, "score": 0.48897, "weight": 1.8, "exact_engine_matches": 0, "forfeits": 1, "normalized_score": 27.16}, "tactic": {"positions": 2, "score": 1.2155, "weight": 2.5, "exact_engine_matches": 1, "forfeits": 1, "normalized_score": 48.62}, "middlegame": {"positions": 2, "score": 1.47686, "weight": 2.2, "exact_engine_matches": 1, "forfeits": 0, "normalized_score": 67.13}, "defense": {"positions": 1, "score": 0.0, "weight": 1.15, "exact_engine_matches": 0, "forfeits": 1, "normalized_score": 0.0}, "endgame": {"positions": 2, "score": 2.18332, "weight": 2.2, "exact_engine_matches": 1, "forfeits": 0, "normalized_score": 99.24}, "mate": {"positions": 1, "score": 0.0, "weight": 1.3, "exact_engine_matches": 0, "forfeits": 1, "normalized_score": 0.0}}}, "total_positions": 10, "completed_positions": 10, "position_manifest": [{"position_id": "opening_center", "position_name": "Classical opening center", "category": "opening", "weight": 0.9, "fen": "rnbqkbnr/ppp2ppp/4p3/3p4/2PP4/5N2/PP2PPPP/RNBQKB1R w KQkq - 0 3", "side_to_move": "white"}, {"position_id": "opening_gambit", "position_name": "King safety in a gambit", "category": "opening", "weight": 0.9, "fen": "rnbqkbnr/pppp1ppp/8/4p3/2B1P3/8/PPPP1PPP/RNBQK1NR b KQkq - 2 2", "side_to_move": "black"}, {"position_id": "tactic_pin", "position_name": "Pinned knight tactic", "category": "tactic", "weight": 1.25, "fen": "r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/2NP1N2/PPP2PPP/R1BQ1RK1 w kq - 6 7", "side_to_move": "white"}, {"position_id": "tactic_fork", "position_name": "Fork pressure", "category": "tactic", "weight": 1.25, "fen": "r2qk2r/ppp2ppp/2npbn2/4p3/2B1P3/2NP1N2/PPP2PPP/R1BQ1RK1 b kq - 7 8", "side_to_move": "black"}, {"position_id": "middlegame_iqp", "position_name": "Isolated queen pawn", "category": "middlegame", "weight": 1.1, "fen": "r2q1rk1/pp2bppp/2n1bn2/2pp4/3P4/2NBPN2/PPQ2PPP/R1B2RK1 w - - 0 10", "side_to_move": "white"}, {"position_id": "middlegame_kingside", "position_name": "Kingside attack choice", "category": "middlegame", "weight": 1.1, "fen": "r1bq1rk1/ppp2ppp/2np1n2/4p3/2B1P3/2NP1N1P/PPP2PP1/R1BQ1RK1 w - - 0 8", "side_to_move": "white"}, {"position_id": "defense_under_fire", "position_name": "Defensive resource", "category": "defense", "weight": 1.15, "fen": "r3r1k1/ppp2ppp/2n2n2/3qp3/3P4/2PB1N2/PP3PPP/R2QR1K1 b - - 0 15", "side_to_move": "black"}, {"position_id": "endgame_rook", "position_name": "Rook endgame activity", "category": "endgame", "weight": 1.2, "fen": "8/5pk1/6p1/2R1p2p/4P2P/5PP1/5K2/r7 w - - 0 40", "side_to_move": "white"}, {"position_id": "endgame_king", "position_name": "King and pawn race", "category": "endgame", "weight": 1.0, "fen": "8/8/5k2/4p3/4P3/5K2/8/8 w - - 0 1", "side_to_move": "white"}, {"position_id": "mate_net", "position_name": "Mate net awareness", "category": "mate", "weight": 1.3, "fen": "6k1/5ppp/8/8/8/8/5PPP/5RK1 w - - 0 1", "side_to_move": "white"}], "positions": [{"position_id": "opening_center", "position_name": "Classical opening center", "category": "opening", "weight": 0.9, "fen": "rnbqkbnr/ppp2ppp/4p3/3p4/2PP4/5N2/PP2PPPP/RNBQKB1R w KQkq - 0 3", "side_to_move": "white", "outcome": "legal_move", "move": "e2e4", "move_san": "e4", "response": "We need to output exactly one legal move at start of reply, preferably UCI. Must be from LEGAL_UCI_MOVES list. No analysis before move. So first characters must be exactly one move from list. Likely best move is e2e4 (pawn push). That's a strong move.", "engine_best_move": "g2g3", "engine_best_san": "g3", "exact_engine_match": false, "centipawn_loss": 211, "score": 0.5433, "weighted_score": 0.48897, "chosen_engine_line": {"move": "e2e4", "san": "e4", "score_cp": -145, "pv": ["e2e4", "d5e4", "f3g5", "g8f6", "b1c3", "f8b4", "d1c2", "d8d4", "c1f4", "b8c6", "a1d1", "d4c5", "g5e4", "f6e4", "c2e4", "f7f5", "e4b1", "e6e5", "f4d2", "c8e6", "b1c2"]}, "engine_lines": [{"move": "g2g3", "san": "g3", "score_cp": 66, "pv": ["g2g3", "g8f6", "f1g2", "f8e7", "e1g1", "e8g8", "d1c2", "a7a5", "f1d1", "b8d7", "b1c3", "d5c4", "f3e5", "d7b6", "c3a4", "f6d5", "a4b6", "d5b6", "e5c4", "b6c4", "c2c4", "a5a4", "a2a3", "c7c6", "c1d2", "d8b6", "d2b4", "e7b4", "a3b4", "c8d7", "c4c5", "b6b5", "c5b5", "c6b5", "g2b7"]}, {"move": "b1c3", "san": "Nc3", "score_cp": 63, "pv": ["b1c3", "g8f6", "g2g3", "f8e7", "f1g2", "e8g8", "e1g1", "b8d7", "d1d3", "b7b6", "c4d5", "e6d5", "c1f4", "c8b7", "a1d1", "f6e4", "d3c2", "e4c3", "b2c3", "b6b5", "f3e5", "a7a6", "a2a4", "d7e5", "d4e5"]}, {"move": "a2a3", "san": "a3", "score_cp": 53, "pv": ["a2a3", "g8f6", "g2g3", "f8e7", "f1g2", "e8g8", "d1c2", "a7a5", "e1g1", "b8d7", "b2b3", "f6e4", "b1c3", "e4c3", "c2c3", "c7c6", "f1d1", "b7b6", "c3c2", "c8b7"]}, {"move": "d1c2", "san": "Qc2", "score_cp": 50, "pv": ["d1c2", "g8f6", "c1g5", "d5c4", "c2c4", "f8e7", "g2g3", "e8g8", "f1g2", "h7h6", "g5f6", "e7f6", "b1c3", "c7c6", "c3e4"]}]}, {"position_id": "opening_gambit", "position_name": "King safety in a gambit", "category": "opening", "weight": 0.9, "fen": "rnbqkbnr/pppp1ppp/8/4p3/2B1P3/8/PPPP1PPP/RNBQK1NR b KQkq - 2 2", "side_to_move": "black", "outcome": "llm_forfeit", "error": "Could not find an exact legal UCI or SAN move in response: 'We need to output exactly one legal move at start of reply, either UCI or SAN from given lists. The position: after 1.e4 e5 2.Bc4? Actually FEN: rnbqkbnr/pppp1ppp/8/4p3/2B1'", "move": null, "engine_best_move": "g8f6", "engine_best_san": "Nf6", "exact_engine_match": false, "centipawn_loss": null, "score": 0.0, "weighted_score": 0.0, "engine_lines": [{"move": "g8f6", "san": "Nf6", "score_cp": -9, "pv": ["g8f6", "b1c3", "f8c5", "g1f3", "d7d6", "e1g1", "e8g8", "d2d4", "e5d4", "f3d4", "h7h6", "c1e3", "f8e8", "f2f3", "c7c6", "g1h1", "d6d5", "c4b3", "c5b4", "e3d2", "b4c3", "d2c3"]}, {"move": "b8c6", "san": "Nc6", "score_cp": -28, "pv": ["b8c6", "d2d3"]}, {"move": "f8c5", "san": "Bc5", "score_cp": -26, "pv": ["f8c5", "g1f3", "b8c6", "e1g1", "g8f6", "d2d3", "e8g8", "f1e1", "a7a5", "h2h3", "h7h6", "c2c3", "d7d6", "b1d2", "c8e6", "b2b3", "f8e8", "c4b5", "e6d7", "c1b2", "c6e7", "b5d7", "f6d7", "d3d4", "c5b6", "d2c4"]}, {"move": "c7c6", "san": "c6", "score_cp": -34, "pv": ["c7c6", "b1c3", "b7b5", "c4b3", "a7a5", "a2a4", "b5b4", "c3e2", "g8f6", "d2d4", "f6e4", "f2f3", "e4g5", "d4e5", "g5e6", "f3f4", "e6c5", "c1e3", "d7d5", "g1f3", "f8e7", "e1g1", "c5b3", "c2b3", "c6c5", "d1c2", "d5d4"]}]}, {"position_id": "tactic_pin", "position_name": "Pinned knight tactic", "category": "tactic", "weight": 1.25, "fen": "r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/2NP1N2/PPP2PPP/R1BQ1RK1 w kq - 6 7", "side_to_move": "white", "outcome": "llm_forfeit", "error": "Could not find an exact legal UCI or SAN move in response: \"We need to output exactly one legal move at start of reply, no analysis before move. Must be from LEGAL_UCI_MOVES list (or SAN). Choose strongest move. The position: White to move. Let's analyze quickly.\\n\\nFEN: r1bqk2r/pppp\"", "move": null, "engine_best_move": "d3d4", "engine_best_san": "d4", "exact_engine_match": false, "centipawn_loss": null, "score": 0.0, "weighted_score": 0.0, "engine_lines": [{"move": "d3d4", "san": "d4", "score_cp": 89, "pv": ["d3d4", "c5d4", "f3d4", "c6d4", "c1e3", "d7d6", "e3d4", "e5d4", "d1d4", "e8g8", "a1d1", "d8e7", "f2f4", "c8e6", "c4e2", "a7a5", "h2h3", "a8d8", "e2c4"]}, {"move": "c3d5", "san": "Nd5", "score_cp": 91, "pv": ["c3d5", "e8g8", "c2c3", "c5e7", "f1e1", "d7d6", "d3d4", "c8g4", "d5e7", "d8e7", "d4d5", "c6b8", "h2h3", "g4f3", "d1f3", "a7a5", "b2b4", "h7h6", "c1d2", "b8d7", "c4b5", "f8c8"]}, {"move": "c1e3", "san": "Be3", "score_cp": 89, "pv": ["c1e3", "c5e7", "d3d4", "d7d6", "h2h3", "e8g8", "f1e1", "c6d4", "f3d4", "e5d4", "d1d4", "c7c6", "a1d1", "d8c7", "e3f4", "f8d8", "d4d3", "b7b5"]}, {"move": "c1g5", "san": "Bg5", "score_cp": 76, "pv": ["c1g5", "c5e7", "d3d4", "d7d6", "h2h3", "e8g8", "f1e1", "f6d7", "g5e7", "c6e7", "d1d2", "e7g6", "a1d1", "d7b6", "c4f1", "f7f6", "b2b3", "g8h8", "a2a4", "a7a5", "d2e3", "c8e6", "d1d2", "e6f7", "g2g3", "g6e7", "c3b5", "c7c6", "b5a3"]}]}, {"position_id": "tactic_fork", "position_name": "Fork pressure", "category": "tactic", "weight": 1.25, "fen": "r2qk2r/ppp2ppp/2npbn2/4p3/2B1P3/2NP1N2/PPP2PPP/R1BQ1RK1 b kq - 7 8", "side_to_move": "black", "outcome": "legal_move", "move": "e6g4", "move_san": "Bg4", "response": "We need to output exactly one legal move at start of reply, preferably UCI. Must be from LEGAL_UCI_MOVES list. No analysis before move. So first characters must be exactly a move string like \"e6g4\" or \"Rg8\" etc. Then after that we can possibly", "engine_best_move": "e6g4", "engine_best_san": "Bg4", "exact_engine_match": true, "centipawn_loss": 5, "score": 0.9724, "weighted_score": 1.2155, "chosen_engine_line": {"move": "e6g4", "san": "Bg4", "score_cp": -437, "pv": ["e6g4", "c4b5", "d8d7", "f1e1", "e8c8", "c1g5", "h7h5", "d3d4", "e5d4", "c3d5", "f6h7", "d5e7", "c8b8", "b5c6", "b7c6", "e7c6", "d7c6", "g5d8", "h8d8", "f3d4", "c6c4", "d1c1"]}, "engine_lines": [{"move": "e6g4", "san": "Bg4", "score_cp": -432, "pv": ["e6g4", "c4b5", "h7h5", "c1g5", "d8d7", "g5f6", "g7f6", "c3d5", "e8c8", "b5c6", "b7c6", "d5e3", "d8g8", "g1h1", "h5h4", "e3g4", "d7g4", "f1g1", "h4h3", "g2g3", "f6f5", "f3d2", "g4d1", "a1d1", "f5e4", "d3e4", "g8e8"]}, {"move": "e6c4", "san": "Bxc4", "score_cp": -457, "pv": ["e6c4", "d3c4", "d8d7", "a2a4", "e8c8", "a4a5", "h7h5", "f3h4", "a7a6", "c1g5", "d7e6", "g5f6", "e6f6", "h4f5", "g7g6", "f5e3", "c6d4", "a1b1", "d6d5", "c4d5"]}, {"move": "h7h6", "san": "h6", "score_cp": -456, "pv": ["h7h6", "c4e6", "f7e6", "d3d4", "g7g5", "d4d5", "g5g4", "f3h4", "c6d4", "c1e3", "d8e7", "g1h1", "h8g8"]}, {"move": "d8d7", "san": "Qd7", "score_cp": -458, "pv": ["d8d7", "c4e6", "f7e6", "d3d4", "e8c8", "d4e5", "d6e5", "d1d7", "d8d7", "a1b1", "h8d8", "b2b4", "b7b5", "c1e3", "a7a6", "h2h4"]}]}, {"position_id": "middlegame_iqp", "position_name": "Isolated queen pawn", "category": "middlegame", "weight": 1.1, "fen": "r2q1rk1/pp2bppp/2n1bn2/2pp4/3P4/2NBPN2/PPQ2PPP/R1B2RK1 w - - 0 10", "side_to_move": "white", "outcome": "legal_move", "move": "d4c5", "move_san": "dxc5", "response": "We need to output exactly one legal move at start of reply, preferably UCI. Must be from LEGAL_UCI_MOVES list. No analysis before move. So first characters must be exactly one move, e.g., \"d4c5\". Then we can optionally add more text? The instruction: \"", "engine_best_move": "d4c5", "engine_best_san": "dxc5", "exact_engine_match": true, "centipawn_loss": 0, "score": 1.0, "weighted_score": 1.1, "chosen_engine_line": {"move": "d4c5", "san": "dxc5", "score_cp": 5, "pv": ["d4c5", "e7c5", "c3e2", "c5b6", "c1d2", "e6g4", "f3d4", "c6d4", "e2d4", "f8e8", "d2c3", "a8c8", "h2h3", "g4d7", "d4e2", "f6e4", "d3e4", "e8e4", "e2g3", "e4c4", "c2e2", "d7b5", "a1d1", "c8c5", "e2f3", "c4c3", "b2c3", "b5f1"]}, "engine_lines": [{"move": "d4c5", "san": "dxc5", "score_cp": -7, "pv": ["d4c5", "e7c5"]}, {"move": "f3g5", "san": "Ng5", "score_cp": -20, "pv": ["f3g5", "h7h6", "g5e6", "f7e6", "d4c5", "c6b4", "c2e2", "b4d3", "e2d3", "e7c5", "h2h3", "f6d7", "c3e2", "c5b6", "c1d2", "d7c5", "d3g6", "f8f6", "g6c2", "f6f7"]}, {"move": "d3f5", "san": "Bf5", "score_cp": -38, "pv": ["d3f5", "d8d7", "f5e6", "f7e6", "d4c5", "e7c5", "c1d2", "c5d6", "a1c1", "a8c8", "c2b3", "a7a6", "c3e2", "f6e4", "d2c3", "e4c3", "b3c3", "d7f7", "e2g3", "f7g6"]}, {"move": "d3e2", "san": "Be2", "score_cp": -50, "pv": ["d3e2", "a8c8", "d4c5", "e7c5", "f1d1", "c6b4", "c2b1", "g7g6", "e2d3", "e6g4", "a2a3", "g4f3", "g2f3", "b4c6", "d3f1", "d5d4", "e3d4", "c6d4", "b1d3", "d8c7", "c1g5", "f6h5", "c3e4", "c5b6", "g1h1", "c7e5", "b2b4", "c8c6", "a3a4", "d4e6", "g5e7"]}]}, {"position_id": "middlegame_kingside", "position_name": "Kingside attack choice", "category": "middlegame", "weight": 1.1, "fen": "r1bq1rk1/ppp2ppp/2np1n2/4p3/2B1P3/2NP1N1P/PPP2PP1/R1BQ1RK1 w - - 0 8", "side_to_move": "white", "outcome": "legal_move", "move": "c4f7", "move_san": "Bxf7+", "response": "We need to output exactly one legal move at start of reply, preferably UCI. Must be from LEGAL_UCI_MOVES list. No analysis before move. So first characters must be exactly one move string, e.g., \"c4f7\". Then we can optionally have more text after? The instruction", "engine_best_move": "d3d4", "engine_best_san": "d4", "exact_engine_match": false, "centipawn_loss": 343, "score": 0.3426, "weighted_score": 0.37686000000000003, "chosen_engine_line": {"move": "c4f7", "san": "Bxf7+", "score_cp": 175, "pv": ["c4f7", "f8f7", "d3d4", "c8d7", "d4e5", "d6e5", "f1e1", "h7h6", "c3d5", "g7g5", "a2a4", "g5g4", "f3h2", "g4h3", "a1a3", "g8h7", "a3g3", "c6d4", "h2f3", "h3h2", "g1h2", "d4f3", "g3f3", "f6g4", "h2g1", "d8h4", "f3f7", "h7g8"]}, "engine_lines": [{"move": "d3d4", "san": "d4", "score_cp": 518, "pv": ["d3d4", "e5d4", "f3d4", "f6e4", "c3e4", "d6d5", "d4c6", "b7c6", "c4d3", "d5e4", "d3e4", "c8e6", "f1e1", "d8f6", "c1d2", "f6b2", "d1f3", "e6d5", "f3f4", "f8e8", "e4d3", "e8e1", "a1e1", "a7a5", "f4g3", "b2a2"]}, {"move": "a2a4", "san": "a4", "score_cp": 516, "pv": ["a2a4", "h7h6", "a1a3", "c8e6", "c4b3", "d8d7", "c3d5", "f6h7", "g1h2", "g7g5", "d5e3", "g8h8", "c2c3", "g5g4", "f3h4", "g4h3", "g2g3", "e6b3", "a3b3"]}, {"move": "f1e1", "san": "Re1", "score_cp": 511, "pv": ["f1e1", "g8h8", "d3d4", "c8h3", "g2h3", "f6d7", "c4f1", "f7f5", "e4f5", "f8f5", "f1g2", "c6d4", "f3d4", "e5d4", "c3e4", "d7e5"]}, {"move": "c1e3", "san": "Be3", "score_cp": 505, "pv": ["c1e3", "h7h6", "f3h2", "b7b5", "c4b3", "c6d4", "e3d4", "e5d4", "c3d5", "f6h7", "a2a4", "h7g5", "d5f4", "b5a4", "b3a4", "f7f5", "e4e5", "d6e5", "f4g6", "e5e4"]}]}, {"position_id": "defense_under_fire", "position_name": "Defensive resource", "category": "defense", "weight": 1.15, "fen": "r3r1k1/ppp2ppp/2n2n2/3qp3/3P4/2PB1N2/PP3PPP/R2QR1K1 b - - 0 15", "side_to_move": "black", "outcome": "llm_forfeit", "error": "Could not find an exact legal UCI or SAN move in response: 'We need to output exactly one legal move at start of reply, no analysis before move. Must be from LEGAL_UCI_MOVES or LEGAL_SAN_MOVES. Choose strongest move.\\n\\nWe need to evaluate position: FEN: r3r1k1/ppp2ppp'", "move": null, "engine_best_move": "e5e4", "engine_best_san": "e4", "exact_engine_match": false, "centipawn_loss": null, "score": 0.0, "weighted_score": 0.0, "engine_lines": [{"move": "e5e4", "san": "e4", "score_cp": 326, "pv": ["e5e4", "c3c4", "d5d8", "d4d5", "c6b8", "d3e4", "e8e4", "e1e4", "f6e4", "d1d4", "e4g5", "f3h4", "g7g6", "a1e1", "b8d7", "e1e3"]}, {"move": "e5d4", "san": "exd4", "score_cp": 88, "pv": ["e5d4", "e1e8", "a8e8", "c3d4", "e8d8", "d1b3", "d5b3", "a2b3", "g8f8", "d3f1", "c6d4", "f3d4", "d8d4", "a1a7", "d4d1", "f2f3", "f6d5", "g1f2", "d1d2", "f2e1", "d2b2", "a7b7", "d5e3"]}, {"move": "c6d4", "san": "Nxd4", "score_cp": 69, "pv": ["c6d4", "c3d4"]}, {"move": "g7g6", "san": "g6", "score_cp": 13, "pv": ["g7g6", "d4e5", "c6e5", "d3e2", "d5c5", "f3d4", "e8e7", "e2f1", "a8e8", "h2h3", "c5d6", "d4c2", "d6b6", "d1d2", "e5d7", "b2b3", "e7e5", "c3c4"]}]}, {"position_id": "endgame_rook", "position_name": "Rook endgame activity", "category": "endgame", "weight": 1.2, "fen": "8/5pk1/6p1/2R1p2p/4P2P/5PP1/5K2/r7 w - - 0 40", "side_to_move": "white", "outcome": "legal_move", "move": "c5e5", "move_san": "Rxe5", "response": "We need to output exactly one legal move at start of reply, either UCI or SAN from given lists. No analysis before move. So we must start with e.g., \"c5e5\" or \"Rxe5\". Then after that we can possibly add analysis? The instruction: \"Return exactly one legal", "engine_best_move": "c5e5", "engine_best_san": "Rxe5", "exact_engine_match": true, "centipawn_loss": 2, "score": 0.9861, "weighted_score": 1.18332, "chosen_engine_line": {"move": "c5e5", "san": "Rxe5", "score_cp": 0, "pv": ["c5e5", "a1c1", "e5d5", "c1c3", "f2e2", "g7f8", "d5d3", "c3c2", "e2e3", "c2c1", "d3d5", "f8g7", "e3f4", "c1c2", "d5d3", "c2c5", "d3d4", "c5c2", "f4e3", "c2c1", "d4d7", "g7f6", "d7d5"]}, "engine_lines": [{"move": "c5e5", "san": "Rxe5", "score_cp": 2, "pv": ["c5e5", "a1c1", "f2e3", "c1c2", "e3f4", "c2c3", "e5d5", "c3c2", "d5d3", "g7f6", "d3d6", "f6g7", "d6b6", "c2c1", "b6b3", "c1c5", "f4e3", "c5c1", "b3d3", "g7f6", "d3d4", "f6g7", "e3f4", "c1c3", "d4d1", "c3c5", "d1d3", "c5c1", "d3e3", "g7f6", "e4e5", "f6g7", "e3e4", "g7h6", "e4d4", "h6g7", "f4e4", "g7f8", "d4b4", "f8g7", "b4b7", "g7f8", "b7d7", "c1g1", "e5e6"]}, {"move": "f2g2", "san": "Kg2", "score_cp": 0, "pv": ["f2g2", "a1a2", "g2f1", "g7f6", "c5c6", "f6e7", "c6b6", "a2a7", "f1g2", "a7d7", "g2f2", "f7f6", "f2f1", "e7f7", "b6b5", "f7g7", "b5b6", "d7c7", "f1g2", "c7c2", "g2g1", "c2c1", "g1g2"]}, {"move": "c5b5", "san": "Rb5", "score_cp": 0, "pv": ["c5b5", "a1a2", "f2f1", "a2a3", "f1e2", "g7f6", "b5b6", "f6e7", "b6b7", "e7e6", "b7b6"]}, {"move": "c5c6", "san": "Rc6", "score_cp": 0, "pv": ["c5c6", "a1a5", "f2f1", "a5a7", "f1g2", "a7e7", "g3g4", "h5g4", "f3g4", "e7d7", "g4g5", "d7d4", "g2f3", "d4d3", "f3g2", "d3e3", "c6c4", "g7f8", "c4a4", "f8e7", "a4a7", "e7e8", "a7a8", "e8d7", "a8a7"]}]}, {"position_id": "endgame_king", "position_name": "King and pawn race", "category": "endgame", "weight": 1.0, "fen": "8/8/5k2/4p3/4P3/5K2/8/8 w - - 0 1", "side_to_move": "white", "outcome": "legal_move", "move": "f3g4", "move_san": "Kg4", "response": "We need to output exactly one legal move at start of reply, either UCI or SAN from given lists. The lists: LEGAL_UCI_MOVES: f3g4, f3g3, f3e3, f3g2, f3f2, f3e2.", "engine_best_move": "f3f2", "engine_best_san": "Kf2", "exact_engine_match": false, "centipawn_loss": 0, "score": 1.0, "weighted_score": 1.0, "chosen_engine_line": {"move": "f3g4", "san": "Kg4", "score_cp": 0, "pv": ["f3g4", "f6g6", "g4h4", "g6h6", "h4g4", "h6g6"]}, "engine_lines": [{"move": "f3f2", "san": "Kf2", "score_cp": 0, "pv": ["f3f2", "f6g5", "f2g3", "g5h5", "g3h3", "h5g5"]}, {"move": "f3g4", "san": "Kg4", "score_cp": 0, "pv": ["f3g4", "f6g6", "g4h3", "g6h5", "h3g3", "h5g5", "g3f3", "g5h4", "f3e2", "h4g4", "e2d2", "g4f4", "d2e1", "f4e4", "e1e2", "e4f4", "e2f2", "e5e4", "f2e2", "e4e3", "e2e1", "f4e5", "e1f1", "e5e4", "f1e1"]}, {"move": "f3g2", "san": "Kg2", "score_cp": 0, "pv": ["f3g2", "f6g6", "g2h3", "g6h5", "h3g3", "h5g5", "g3f3", "g5h4", "f3e2", "h4g4", "e2d2", "g4f4", "d2e1", "f4e4", "e1e2", "e4f4", "e2f2", "e5e4", "f2e2", "e4e3", "e2e1", "f4e5", "e1f1", "e5e4", "f1e1", "e4d5", "e1e2", "d5d4", "e2e1", "d4e4", "e1e2", "e4d4"]}, {"move": "f3e2", "san": "Ke2", "score_cp": 0, "pv": ["f3e2", "f6g5", "e2e3", "g5g4", "e3e2", "g4f4", "e2d1", "f4e3", "d1e1", "e3e4", "e1e2", "e4d4", "e2d2", "e5e4", "d2e2", "e4e3", "e2e1", "d4d3", "e1d1", "d3e4", "d1e1", "e4d3"]}]}, {"position_id": "mate_net", "position_name": "Mate net awareness", "category": "mate", "weight": 1.3, "fen": "6k1/5ppp/8/8/8/8/5PPP/5RK1 w - - 0 1", "side_to_move": "white", "outcome": "llm_forfeit", "error": "Could not find an exact legal UCI or SAN move in response: \"We need to output exactly one legal move at start of reply, either UCI or SAN from given lists. The board: FEN: 6k1/5ppp/8/8/8/8/5PPP/5RK1 w - - 0 1\\n\\nLet's parse:\"", "move": null, "engine_best_move": "f1c1", "engine_best_san": "Rc1", "exact_engine_match": false, "centipawn_loss": null, "score": 0.0, "weighted_score": 0.0, "engine_lines": [{"move": "f1c1", "san": "Rc1", "score_cp": 743, "pv": ["f1c1", "f7f6", "g1f1", "g8f7", "c1c7", "f7g6", "f1e2", "g6h6", "e2e3", "g7g5", "c7b7", "h6g6", "e3e4", "h7h6", "b7b6", "h6h5", "b6b5", "g5g4", "e4f4", "g6f7", "b5b7", "f7e6", "b7b6", "e6d5", "b6f6", "d5c4"]}, {"move": "f1b1", "san": "Rb1", "score_cp": 717, "pv": ["f1b1", "g8f8", "g1f1", "f8e7", "f1e2", "e7e6", "b1b7", "h7h5", "e2e3", "g7g6", "e3e4", "f7f5", "e4f4", "e6d6", "b7a7", "h5h4", "a7a6", "d6d5", "a6g6", "h4h3", "g2h3", "d5d4", "g6h6", "d4d3", "f4f5"]}, {"move": "f1a1", "san": "Ra1", "score_cp": 705, "pv": ["f1a1", "g8f8", "g1f1", "f8e7", "a1b1", "e7e6", "f1e2", "f7f6", "e2e3", "e6d5", "b1b7", "g7g6", "b7b6", "d5e5", "b6b5", "e5d6", "b5a5", "d6c6", "a5a6", "c6d5", "a6f6", "d5e5"]}, {"move": "f1d1", "san": "Rd1", "score_cp": 702, "pv": ["f1d1", "h7h6", "g1f1", "g8h7", "d1b1", "h6h5", "f1e2", "h7g6", "e2e3", "g6f6", "e3f4", "f6e6", "b1b7", "h5h4", "f4g5", "f7f6", "g5f4", "g7g5", "f4e4", "f6f5", "e4d4"]}]}]};
+    const liveSource = "ollama-nemotron-3-super.live.json";
+    const files = ['a','b','c','d','e','f','g','h'];
+    const unicodePieces = {
+      P: '♙', N: '♘', B: '♗', R: '♖', Q: '♕', K: '♔',
+      p: '♟', n: '♞', b: '♝', r: '♜', q: '♛', k: '♚'
+    };
+    let index = 0;
+    let shownMove = null;
+    let latestPayloadText = JSON.stringify(data);
+
+    const boardEl = document.getElementById('board');
+    const selectEl = document.getElementById('positionSelect');
+    const listEl = document.getElementById('positionList');
+
+    function parseFen(fen) {
+      const board = {};
+      const rows = fen.split(' ')[0].split('/');
+      for (let rankIndex = 0; rankIndex < 8; rankIndex++) {
+        let fileIndex = 0;
+        const rank = 8 - rankIndex;
+        for (const ch of rows[rankIndex]) {
+          if (/\d/.test(ch)) {
+            fileIndex += Number(ch);
+          } else {
+            board[files[fileIndex] + rank] = ch;
+            fileIndex++;
+          }
+        }
+      }
+      return board;
+    }
+
+    function applyUci(board, uci) {
+      const next = {...board};
+      if (!uci || uci.length < 4) return next;
+      const from = uci.slice(0, 2);
+      const to = uci.slice(2, 4);
+      const promotion = uci.length > 4 ? uci[4] : '';
+      const piece = next[from];
+      delete next[from];
+      if (piece) next[to] = promotion ? promote(piece, promotion) : piece;
+      return next;
+    }
+
+    function promote(piece, promotion) {
+      const promoted = piece === piece.toUpperCase() ? promotion.toUpperCase() : promotion.toLowerCase();
+      return promoted;
+    }
+
+    function renderBoard(position, moveKind=null) {
+      const base = parseFen(position.fen);
+      const modelMove = position.move || null;
+      const engineMove = position.engine_best_move || null;
+      const compare = moveKind === 'both';
+      const move = moveKind === 'model' ? modelMove : moveKind === 'engine' ? engineMove : null;
+      const display = move && !compare ? applyUci(base, move) : base;
+      boardEl.innerHTML = '';
+      for (let rank = 8; rank >= 1; rank--) {
+        for (const file of files) {
+          const square = file + rank;
+          const cell = document.createElement('div');
+          cell.className = `square ${(files.indexOf(file) + rank) % 2 ? 'light' : 'dark'}`;
+          decorateSquare(cell, square, moveKind, modelMove, engineMove);
+          const piece = display[square];
+          if (piece) {
+            const pieceEl = document.createElement('div');
+            pieceEl.className = 'piece';
+            pieceEl.textContent = unicodePieces[piece] || piece;
+            cell.appendChild(pieceEl);
+          }
+          if (file === 'a' || rank === 1) {
+            const coord = document.createElement('div');
+            coord.className = 'coord';
+            coord.textContent = file === 'a' && rank === 1 ? square : file === 'a' ? rank : file;
+            cell.appendChild(coord);
+          }
+          boardEl.appendChild(cell);
+        }
+      }
+      renderArrows(moveKind, modelMove, engineMove);
+    }
+
+    function decorateSquare(cell, square, moveKind, modelMove, engineMove) {
+      const modelSquares = moveSquares(modelMove);
+      const engineSquares = moveSquares(engineMove);
+      if (moveKind === 'model' && modelSquares.includes(square)) cell.classList.add(square === modelSquares[0] ? 'from' : 'to', 'model');
+      if (moveKind === 'engine' && engineSquares.includes(square)) cell.classList.add(square === engineSquares[0] ? 'from' : 'to', 'engine');
+      if (moveKind !== 'both') return;
+      const modelHit = modelSquares.includes(square);
+      const engineHit = engineSquares.includes(square);
+      if (modelHit && engineHit) {
+        if (modelMove === engineMove) cell.classList.add(square === modelSquares[0] ? 'from' : 'to', 'both');
+        cell.classList.add(modelMove === engineMove ? 'both' : 'split-model-engine');
+        addTag(cell, modelMove === engineMove ? 'both' : 'model', modelMove === engineMove ? 'Both' : 'LLM');
+        if (modelMove !== engineMove) addTag(cell, 'engine', 'AI', true);
+      } else if (modelHit) {
+        cell.classList.add(square === modelSquares[0] ? 'from' : 'to', 'model');
+        addTag(cell, 'model', 'LLM');
+      } else if (engineHit) {
+        cell.classList.add(square === engineSquares[0] ? 'from' : 'to', 'engine');
+        addTag(cell, 'engine', 'AI');
+      }
+    }
+
+    function addTag(cell, kind, text, lower=false) {
+      const tag = document.createElement('div');
+      tag.className = `tag ${kind}`;
+      tag.textContent = text;
+      if (lower) {
+        tag.style.top = '22px';
+      }
+      cell.appendChild(tag);
+    }
+
+    function moveSquares(uci) {
+      return uci && uci.length >= 4 ? [uci.slice(0, 2), uci.slice(2, 4)] : [];
+    }
+
+    function renderArrows(moveKind, modelMove, engineMove) {
+      if (!moveKind || moveKind === 'reset') return;
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('viewBox', '0 0 800 800');
+      svg.setAttribute('class', 'arrow-layer');
+      const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+      defs.appendChild(marker('arrowModel', '#237b64'));
+      defs.appendChild(marker('arrowEngine', '#bd7b19'));
+      defs.appendChild(marker('arrowBoth', '#2f6fed'));
+      svg.appendChild(defs);
+      if (moveKind === 'model') addArrow(svg, modelMove, '#237b64', 'arrowModel', 0);
+      if (moveKind === 'engine') addArrow(svg, engineMove, '#bd7b19', 'arrowEngine', 0);
+      if (moveKind === 'both') {
+        if (modelMove && engineMove && modelMove === engineMove) {
+          addArrow(svg, modelMove, '#2f6fed', 'arrowBoth', 0);
+        } else {
+          addArrow(svg, modelMove, '#237b64', 'arrowModel', -18);
+          addArrow(svg, engineMove, '#bd7b19', 'arrowEngine', 18);
+        }
+      }
+      boardEl.appendChild(svg);
+    }
+
+    function marker(id, color) {
+      const markerEl = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
+      markerEl.setAttribute('id', id);
+      markerEl.setAttribute('markerWidth', '10');
+      markerEl.setAttribute('markerHeight', '10');
+      markerEl.setAttribute('refX', '8');
+      markerEl.setAttribute('refY', '3');
+      markerEl.setAttribute('orient', 'auto');
+      markerEl.setAttribute('markerUnits', 'strokeWidth');
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', 'M0,0 L0,6 L9,3 z');
+      path.setAttribute('fill', color);
+      markerEl.appendChild(path);
+      return markerEl;
+    }
+
+    function addArrow(svg, move, color, markerId, offset) {
+      if (!move || move.length < 4) return;
+      const from = squareCenter(move.slice(0, 2));
+      const to = squareCenter(move.slice(2, 4));
+      const dx = to.x - from.x;
+      const dy = to.y - from.y;
+      const len = Math.hypot(dx, dy) || 1;
+      const nx = -dy / len * offset;
+      const ny = dx / len * offset;
+      const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      line.setAttribute('x1', from.x + nx);
+      line.setAttribute('y1', from.y + ny);
+      line.setAttribute('x2', to.x + nx);
+      line.setAttribute('y2', to.y + ny);
+      line.setAttribute('stroke', color);
+      line.setAttribute('stroke-width', '18');
+      line.setAttribute('stroke-linecap', 'round');
+      line.setAttribute('opacity', '0.86');
+      line.setAttribute('marker-end', `url(#${markerId})`);
+      svg.appendChild(line);
+    }
+
+    function squareCenter(square) {
+      const file = files.indexOf(square[0]);
+      const rank = Number(square[1]);
+      return { x: file * 100 + 50, y: (8 - rank) * 100 + 50 };
+    }
+
+    function setPosition(nextIndex) {
+      const rows = combinedRows();
+      index = Math.max(0, Math.min(rows.length - 1, nextIndex));
+      shownMove = null;
+      const position = rows[index];
+      selectEl.value = String(index);
+      document.querySelectorAll('.list button').forEach((button, i) => button.classList.toggle('active', i === index));
+      document.getElementById('positionTitle').textContent = `${index + 1}. ${position.position_name}`;
+      document.getElementById('positionSubtitle').textContent = `${position.position_id} · ${position.category} · ${position.side_to_move} to move`;
+      document.getElementById('scoreMetric').textContent = position._pending ? '...' : Number(position.score || 0).toFixed(3);
+      document.getElementById('lossMetric').textContent = position._pending ? 'waiting' : position.centipawn_loss === null || position.centipawn_loss === undefined ? 'forfeit' : position.centipawn_loss;
+      document.getElementById('matchMetric').textContent = position._pending ? 'waiting' : position.exact_engine_match ? 'yes' : 'no';
+      document.getElementById('modelMove').textContent = position._pending ? 'waiting' : position.move ? `${position.move} ${position.move_san || ''}` : position.outcome;
+      document.getElementById('engineMove').textContent = position._pending ? 'waiting' : position.engine_best_move ? `${position.engine_best_move} ${position.engine_best_san || ''}` : 'none';
+      document.getElementById('modelNote').textContent = position._pending ? 'The LLM has not answered this position yet.' : moveExplanation(position);
+      document.getElementById('engineNote').textContent = position._pending ? 'Stockfish analysis will appear when this row completes.' : engineExplanation(position);
+      document.getElementById('waitingPanel').hidden = !position._pending;
+      document.getElementById('responseText').textContent = position.response || position.error || '';
+      renderBoard(position);
+      updateButtons(position);
+    }
+
+    function showMove(kind) {
+      shownMove = kind;
+      const position = combinedRows()[index];
+      if (position._pending) return;
+      renderBoard(position, kind);
+    }
+
+    function buildSelectors() {
+      selectEl.innerHTML = '';
+      listEl.innerHTML = '';
+      combinedRows().forEach((position, i) => {
+        const option = document.createElement('option');
+        option.value = String(i);
+        option.textContent = `${i + 1}. ${position.position_id}`;
+        selectEl.appendChild(option);
+
+        const button = document.createElement('button');
+        const name = document.createElement('span');
+        name.textContent = `${i + 1}. ${position.position_name}`;
+        const pill = document.createElement('span');
+        pill.className = `pill ${position._pending ? 'waiting' : position.outcome === 'legal_move' ? 'ok' : ''}`;
+        pill.textContent = position._pending ? 'waiting' : position.outcome === 'legal_move' ? Number(position.score || 0).toFixed(2) : 'forfeit';
+        button.appendChild(name);
+        button.appendChild(pill);
+        button.addEventListener('click', () => setPosition(i));
+        listEl.appendChild(button);
+      });
+    }
+
+    function combinedRows() {
+      const results = new Map((data.positions || []).map(item => [item.position_id, item]));
+      const manifest = data.position_manifest && data.position_manifest.length ? data.position_manifest : data.positions || [];
+      return manifest.map((meta, i) => {
+        const result = results.get(meta.position_id);
+        if (result) return {...meta, ...result, _pending: false};
+        return {...meta, side_to_move: meta.side_to_move || fenSide(meta.fen), _pending: true};
+      });
+    }
+
+    function fenSide(fen) {
+      return fen && fen.split(' ')[1] === 'b' ? 'black' : 'white';
+    }
+
+    function moveExplanation(position) {
+      if (position.outcome !== 'legal_move') return 'No legal move was accepted, so this row scores zero.';
+      if (position.exact_engine_match) return 'The LLM matched the master AI top move exactly.';
+      return `The LLM chose a legal move, losing ${position.centipawn_loss} centipawns versus the master AI top line.`;
+    }
+
+    function engineExplanation(position) {
+      if (!position.engine_best_move) return 'No engine move was available.';
+      const line = position.engine_lines && position.engine_lines[0];
+      return line ? `Top line score: ${line.score_cp} cp. Principal variation starts ${line.pv.slice(0, 5).join(' ')}.` : 'Top move from the master AI.';
+    }
+
+    function updateButtons(position) {
+      document.getElementById('modelBtn').disabled = position._pending || !position.move;
+      document.getElementById('engineBtn').disabled = position._pending || !position.engine_best_move;
+      document.getElementById('bothBtn').disabled = position._pending || (!position.move && !position.engine_best_move);
+    }
+
+    function updateHeader() {
+      const completed = data.completed_positions ?? (data.positions || []).length;
+      const total = data.total_positions || combinedRows().length;
+      const score = Number((data.summary || {}).normalized_score || 0).toFixed(2);
+      const legal = (data.summary || {}).legal_moves || 0;
+      const status = data.status === 'running' ? 'Running' : 'Complete';
+      document.getElementById('runMeta').textContent = `${status} · ${data.model_name} · ${completed}/${total} positions · score ${score} · ${legal} legal`;
+      document.getElementById('statusDot').classList.toggle('running', data.status === 'running');
+    }
+
+    async function refreshLiveData() {
+      if (!liveSource) return;
+      try {
+        const response = await fetch(`${liveSource}?t=${Date.now()}`, {cache: 'no-store'});
+        if (!response.ok) return;
+        const text = await response.text();
+        if (text === latestPayloadText) return;
+        const currentId = combinedRows()[index]?.position_id;
+        latestPayloadText = text;
+        data = JSON.parse(text);
+        buildSelectors();
+        const nextIndex = Math.max(0, combinedRows().findIndex(row => row.position_id === currentId));
+        setPosition(nextIndex);
+        updateHeader();
+      } catch (error) {
+        // The benchmark may be between writes. Keep showing the last good state.
+      }
+    }
+
+    function init() {
+      const engine = data.engine || {};
+      document.getElementById('engineMeta').textContent = `Master AI · ${engine.threads || '?'} threads · ${engine.hash_mb || '?'} MB hash · ${engine.movetime_ms || '?'} ms`;
+      buildSelectors();
+      updateHeader();
+      setPosition(0);
+      document.getElementById('prevBtn').addEventListener('click', () => setPosition(index - 1));
+      document.getElementById('nextBtn').addEventListener('click', () => setPosition(index + 1));
+      document.getElementById('modelBtn').addEventListener('click', () => showMove('model'));
+      document.getElementById('engineBtn').addEventListener('click', () => showMove('engine'));
+      document.getElementById('bothBtn').addEventListener('click', () => showMove('both'));
+      document.getElementById('resetBtn').addEventListener('click', () => setPosition(index));
+      selectEl.addEventListener('change', event => setPosition(Number(event.target.value)));
+      window.addEventListener('keydown', event => {
+        if (event.key === 'ArrowLeft') setPosition(index - 1);
+        if (event.key === 'ArrowRight') setPosition(index + 1);
+        if (event.key.toLowerCase() === 'm') showMove('model');
+        if (event.key.toLowerCase() === 's') showMove('engine');
+        if (event.key.toLowerCase() === 'b') showMove('both');
+      });
+      if (liveSource) setInterval(refreshLiveData, 1500);
+    }
+
+    init();
+  </script>
+</body>
+</html>

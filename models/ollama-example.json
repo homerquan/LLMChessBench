@@ -1,0 +1,18 @@
+{
+  "provider": {
+    "ollama": {
+      "name": "Ollama",
+      "options": {
+        "baseURL": "http://localhost:11434/v1"
+      },
+      "models": {
+        "ollama-example": {
+          "name": "Local Ollama Model",
+          "model": "llama3.1:8b",
+          "rate_limit_rpm": 60,
+          "timeout_seconds": 120
+        }
+      }
+    }
+  }
+}

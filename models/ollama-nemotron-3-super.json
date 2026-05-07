@@ -1,0 +1,21 @@
+{
+  "provider": {
+    "ollama": {
+      "name": "Ollama LAN",
+      "options": {
+        "baseURL": "http://192.168.4.173:11434/v1"
+      },
+      "models": {
+        "ollama-nemotron-3-super": {
+          "name": "Nemotron 3 Super (Ollama)",
+          "model": "nemotron-3-super:latest",
+          "rate_limit_rpm": 120,
+          "timeout_seconds": 240,
+          "extra_body": {
+            "max_tokens": 64
+          }
+        }
+      }
+    }
+  }
+}

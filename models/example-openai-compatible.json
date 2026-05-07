@@ -1,0 +1,19 @@
+{
+  "provider": {
+    "openrouter": {
+      "name": "OpenRouter",
+      "options": {
+        "baseURL": "https://openrouter.ai/api/v1",
+        "apiKeyEnv": "OPENROUTER_API_KEY"
+      },
+      "models": {
+        "my-model": {
+          "name": "My Model",
+          "model": "provider/model-id",
+          "rate_limit_rpm": 30,
+          "timeout_seconds": 120
+        }
+      }
+    }
+  }
+}
