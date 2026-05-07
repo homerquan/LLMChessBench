@@ -26,6 +26,11 @@ classifiers = [
   "Topic :: Games/Entertainment :: Board Games",
 ]
 
+[project.urls]
+Homepage = "https://github.com/homerquan/LLMChessBench"
+Repository = "https://github.com/homerquan/LLMChessBench"
+Issues = "https://github.com/homerquan/LLMChessBench/issues"
+
 [project.scripts]
 llmcheesbench = "llmcheesbench.cli:run_cli"
 chessbench = "llmcheesbench.cli:run_cli"
